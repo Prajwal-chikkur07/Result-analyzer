@@ -180,5 +180,72 @@ async def search_results(q: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
+@app.get("/uploads")
+async def get_uploads():
+    """Get all uploads from database"""
+    try:
+        uploads = get_all_uploads()
+        return uploads
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get uploads: {str(e)}")
+
+@app.delete("/uploads/{upload_id}")
+async def delete_upload_endpoint(upload_id: int):
+    """Delete an upload from database"""
+    try:
+        delete_upload(upload_id)
+        return {"status": "success", "message": "Upload deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete upload: {str(e)}")
+
+@app.get("/settings")
+async def get_settings():
+    """Get database settings and statistics"""
+    try:
+        stats = get_database_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get settings: {str(e)}")
+
+@app.post("/database/clear")
+async def clear_database():
+    """Clear all data from database"""
+    try:
+        clear_all_data()
+        # Reset session data
+        session_data["records"] = []
+        session_data["analysis"] = {}
+        session_data["filename"] = ""
+        session_data["upload_id"] = None
+        return {"status": "success", "message": "All data cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear database: {str(e)}")
+
+@app.get("/current-data")
+async def get_current_data():
+    """Get current session data"""
+    try:
+        if session_data.get("analysis") and "raw_data" in session_data["analysis"]:
+            return {
+                "hasData": True,
+                "filename": session_data.get("filename", ""),
+                "students_count": len(session_data.get("records", [])),
+                **session_data["analysis"]
+            }
+        else:
+            # Try to load latest data
+            load_latest_session()
+            if session_data.get("analysis") and "raw_data" in session_data["analysis"]:
+                return {
+                    "hasData": True,
+                    "filename": session_data.get("filename", ""),
+                    "students_count": len(session_data.get("records", [])),
+                    **session_data["analysis"]
+                }
+            else:
+                return {"hasData": False}
+    except Exception as e:
+        return {"hasData": False, "error": str(e)}
+
 # Vercel handler
 handler = app

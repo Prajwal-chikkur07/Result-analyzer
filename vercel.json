@@ -8,19 +8,42 @@
   },
   "routes": [
     {
-      "src": "/",
-      "dest": "index.html"
-    },
-    {
       "src": "/api/(.*)",
       "dest": "api/index.py"
     },
     {
+      "src": "/",
+      "dest": "index.html"
+    },
+    {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
+      "dest": "/$1"
+    },
+    {
       "src": "/(.*)",
-      "dest": "api/index.py"
+      "dest": "index.html"
     }
   ],
   "env": {
     "GOOGLE_API_KEY": "AIzaSyC3Ys3cy_ewpAfYee8_-XbKeJv38Q44hv8"
-  }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        }
+      ]
+    }
+  ]
 }

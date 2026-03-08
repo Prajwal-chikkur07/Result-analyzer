@@ -1,9 +1,8 @@
-import pandas as pd
 import re
 
 def generate_analysis(data):
     """
-    Analyzes the extracted student data using pandas.
+    Analyzes the extracted student data using native Python.
     Returns: abstract, subject_analysis, top_students, raw_data, subject_columns
     """
     if not data:
@@ -15,7 +14,7 @@ def generate_analysis(data):
             "subject_columns": []
         }
 
-    # Flatten subjects for easier pandas processing
+    # Flatten subjects for easier processing
     rows = []
     all_subjects_ordered = []  # preserve order
     seen_subjects = set()
@@ -36,11 +35,9 @@ def generate_analysis(data):
         row["Result"] = student["Result"]
         rows.append(row)
 
-    df = pd.DataFrame(rows)
-
     # 1. Result Abstract
-    total_students = len(df)
-    passed_students = len(df[df["Result"] == "PASS"])
+    total_students = len(rows)
+    passed_students = len([r for r in rows if r["Result"] == "PASS"])
     failed_students = total_students - passed_students
     pass_percentage = (passed_students / total_students * 100) if total_students > 0 else 0
 
@@ -54,27 +51,40 @@ def generate_analysis(data):
     # 2. Subject Analysis
     subject_stats = []
     for sub in all_subjects_ordered:
-        if sub in df.columns:
-            sub_series = pd.to_numeric(df[sub], errors='coerce').dropna()
-            appeared = len(sub_series)
-            if appeared > 0:
-                passed = len(sub_series[sub_series >= 35])
-                failed = appeared - passed
-                pass_perc = (passed / appeared * 100)
-                subject_stats.append({
-                    "subject": sub,
-                    "appeared": appeared,
-                    "passed": passed,
-                    "failed": failed,
-                    "pass_percentage": round(pass_perc, 2),
-                    "highest": float(sub_series.max()),
-                    "lowest": float(sub_series.min()),
-                    "average": round(float(sub_series.mean()), 2)
-                })
+        # Get all numeric scores for this subject
+        scores = []
+        for row in rows:
+            score = row.get(sub)
+            if score is not None and str(score).replace('.', '').isdigit():
+                scores.append(float(score))
+        
+        if scores:
+            appeared = len(scores)
+            passed = len([s for s in scores if s >= 35])
+            failed = appeared - passed
+            pass_perc = (passed / appeared * 100)
+            subject_stats.append({
+                "subject": sub,
+                "appeared": appeared,
+                "passed": passed,
+                "failed": failed,
+                "pass_percentage": round(pass_perc, 2),
+                "highest": max(scores),
+                "lowest": min(scores),
+                "average": round(sum(scores) / len(scores), 2)
+            })
 
     # 3. Top Students
-    top_students_df = df.sort_values(by="Total", ascending=False).head(5)
-    top_students = top_students_df[["Student Name", "USN", "Total", "Result"]].to_dict(orient="records")
+    # Sort by total marks (descending)
+    sorted_students = sorted(rows, key=lambda x: float(x["Total"]) if str(x["Total"]).replace('.', '').isdigit() else 0, reverse=True)
+    top_students = []
+    for student in sorted_students[:5]:
+        top_students.append({
+            "Student Name": student["Student Name"],
+            "USN": student["USN"],
+            "Total": student["Total"],
+            "Result": student["Result"]
+        })
 
     return {
         "abstract": abstract,
@@ -85,15 +95,14 @@ def generate_analysis(data):
     }
 
 
-def query_results(df_rows, query):
+def query_results(rows, query):
     """
     Comprehensive keyword-based structured query search.
     Returns matching rows as a list of dicts.
     """
-    if not df_rows:
+    if not rows:
         return []
 
-    df = pd.DataFrame(df_rows)
     q = query.lower().strip()
 
     # Identify numeric thresholds in the query
@@ -101,83 +110,113 @@ def query_results(df_rows, query):
     threshold = nums[0] if nums else None
 
     # Identify subject columns in the query
-    subject_cols = [c for c in df.columns if c not in ("Student Name", "USN", "Total", "Result", "None")]
+    subject_cols = []
+    if rows:
+        subject_cols = [k for k in rows[0].keys() if k not in ("Student Name", "USN", "Total", "Result")]
     matched_subject = next((col for col in subject_cols if col.lower() in q), None)
 
     # ── PASS students
     if any(k in q for k in ["passed", "pass students", "who passed", "all pass"]):
-        subset = df[df["Result"] == "PASS"]
-        return _format(subset, subject_cols)
+        return [row for row in rows if row["Result"] == "PASS"]
 
     # ── FAIL students
     if any(k in q for k in ["failed", "fail students", "who failed", "not passed"]):
         if matched_subject:
-            col_num = pd.to_numeric(df[matched_subject], errors='coerce')
-            return _format(df[col_num < 35], subject_cols)
-        return _format(df[df["Result"] == "FAIL"], subject_cols)
+            result = []
+            for row in rows:
+                score = row.get(matched_subject)
+                if score is not None and str(score).replace('.', '').isdigit() and float(score) < 35:
+                    result.append(row)
+            return result
+        return [row for row in rows if row["Result"] == "FAIL"]
 
     # ── TOPPER / HIGHEST / RANK 1
     if any(k in q for k in ["topper", "top student", "rank 1", "first", "highest marks", "highest scorer", "best student"]):
         if matched_subject:
-            col_num = pd.to_numeric(df[matched_subject], errors='coerce')
-            idx = col_num.idxmax()
-            return _format(df.loc[[idx]], subject_cols)
-        top = df.sort_values("Total", ascending=False).head(1)
-        return _format(top, subject_cols)
+            best_score = -1
+            best_student = None
+            for row in rows:
+                score = row.get(matched_subject)
+                if score is not None and str(score).replace('.', '').isdigit():
+                    score_val = float(score)
+                    if score_val > best_score:
+                        best_score = score_val
+                        best_student = row
+            return [best_student] if best_student else []
+        
+        # Find student with highest total
+        best_total = -1
+        best_student = None
+        for row in rows:
+            total = row.get("Total")
+            if total is not None and str(total).replace('.', '').isdigit():
+                total_val = float(total)
+                if total_val > best_total:
+                    best_total = total_val
+                    best_student = row
+        return [best_student] if best_student else []
 
     # ── ABOVE THRESHOLD
     if any(k in q for k in ["above", "more than", "greater than", "scoring above", "scored above"]):
         if threshold is not None:
-            if matched_subject:
-                col_num = pd.to_numeric(df[matched_subject], errors='coerce')
-                return _format(df[col_num > threshold], subject_cols)
-            return _format(df[pd.to_numeric(df["Total"], errors='coerce') > threshold], subject_cols)
+            result = []
+            for row in rows:
+                if matched_subject:
+                    score = row.get(matched_subject)
+                    if score is not None and str(score).replace('.', '').isdigit() and float(score) > threshold:
+                        result.append(row)
+                else:
+                    total = row.get("Total")
+                    if total is not None and str(total).replace('.', '').isdigit() and float(total) > threshold:
+                        result.append(row)
+            return result
 
     # ── BELOW THRESHOLD
     if any(k in q for k in ["below", "less than", "under", "scoring below"]):
         if threshold is not None:
-            if matched_subject:
-                col_num = pd.to_numeric(df[matched_subject], errors='coerce')
-                return _format(df[col_num < threshold], subject_cols)
-            return _format(df[pd.to_numeric(df["Total"], errors='coerce') < threshold], subject_cols)
+            result = []
+            for row in rows:
+                if matched_subject:
+                    score = row.get(matched_subject)
+                    if score is not None and str(score).replace('.', '').isdigit() and float(score) < threshold:
+                        result.append(row)
+                else:
+                    total = row.get("Total")
+                    if total is not None and str(total).replace('.', '').isdigit() and float(total) < threshold:
+                        result.append(row)
+            return result
 
     # ── ALL STUDENTS
     if any(k in q for k in ["all students", "show all", "list all", "everyone", "full list"]):
-        return _format(df, subject_cols)
+        return rows
 
     # ── TOP N STUDENTS
     top_n_match = re.search(r'top\s*(\d+)', q)
     if top_n_match:
         n = int(top_n_match.group(1))
-        return _format(df.sort_values("Total", ascending=False).head(n), subject_cols)
+        sorted_students = sorted(rows, key=lambda x: float(x["Total"]) if str(x["Total"]).replace('.', '').isdigit() else 0, reverse=True)
+        return sorted_students[:n]
 
     # ── SUBJECT SPECIFIC: return all students with that subject's marks
     if matched_subject:
-        return _format(df[["Student Name", "USN", matched_subject, "Total", "Result"]], subject_cols)
+        result = []
+        for row in rows:
+            filtered_row = {
+                "Student Name": row["Student Name"],
+                "USN": row["USN"],
+                matched_subject: row.get(matched_subject, "-"),
+                "Total": row["Total"],
+                "Result": row["Result"]
+            }
+            result.append(filtered_row)
+        return result
 
     # ── NAME / USN SEARCH
-    name_usn_mask = df.apply(
-        lambda row: q in str(row.get("Student Name", "")).lower() or q in str(row.get("USN", "")).lower(),
-        axis=1
-    )
-    if name_usn_mask.any():
-        return _format(df[name_usn_mask], subject_cols)
-
-    return []
-
-
-def _format(df, subject_cols):
-    """Convert DataFrame rows to serializable dicts with numeric types cleaned."""
     result = []
-    for _, row in df.iterrows():
-        d = {}
-        for col in df.columns:
-            val = row[col]
-            if val is None or (isinstance(val, float) and pd.isna(val)):
-                d[col] = "-"
-            elif isinstance(val, float) and val == int(val):
-                d[col] = int(val)
-            else:
-                d[col] = val
-        result.append(d)
+    for row in rows:
+        name = str(row.get("Student Name", "")).lower()
+        usn = str(row.get("USN", "")).lower()
+        if q in name or q in usn:
+            result.append(row)
+    
     return result
