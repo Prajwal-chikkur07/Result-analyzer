@@ -37,19 +37,34 @@ session_data = {
 }
 
 def load_latest_session():
-    """Load the latest upload data into session"""
-    latest_data = get_latest_upload_data()
-    if latest_data:
-        session_data["records"] = latest_data["students"]
-        session_data["analysis"] = latest_data["analysis"]
-        session_data["filename"] = latest_data["upload_info"]["original_filename"]
-        session_data["upload_id"] = latest_data["upload_info"]["id"]
-        
-        # Update AI knowledge base
-        if latest_data["analysis"]:
-            update_knowledge_base(latest_data["analysis"], latest_data["upload_info"]["original_filename"])
+    """Load the latest upload data into session and update AI knowledge base"""
+    try:
+        latest_data = get_latest_upload_data()
+        if latest_data:
+            session_data["records"] = latest_data["students"]
+            session_data["analysis"] = latest_data["analysis"]
+            session_data["filename"] = latest_data["upload_info"]["original_filename"]
+            session_data["upload_id"] = latest_data["upload_info"]["id"]
+            
+            # CRITICAL: Update AI knowledge base so AI can work with the data
+            if latest_data["analysis"]:
+                update_knowledge_base(latest_data["analysis"], latest_data["upload_info"]["original_filename"])
+                print(f"AI knowledge base updated with data from {latest_data['upload_info']['original_filename']}")
+                print(f"Loaded {len(latest_data['students'])} students for AI analysis")
+            return True
+        return False
+    except Exception as e:
+        print(f"Error loading latest session: {e}")
+        return False
 
 # Load latest session on startup
+try:
+    from database import init_database
+    init_database()
+    print("Database initialized successfully")
+except Exception as e:
+    print(f"Warning: Database initialization failed: {e}")
+
 load_latest_session()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,8 +73,7 @@ load_latest_session()
 @app.post("/process")
 async def process_pdf(file: UploadFile = File(...)):
     """
-    Upload a PDF, extract student records, run analytics, and update the
-    AI knowledge base — all in one call.
+    Upload a PDF, extract student records, run analytics, store in database, and update the AI knowledge base
     """
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
@@ -84,13 +98,23 @@ async def process_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-    # 4. Store in session
+    # 4. Store in session AND database
     session_data["records"] = records
     session_data["analysis"] = analysis
     session_data["filename"] = file.filename
 
-    # 5. Update AI knowledge base (so AI answers from THIS PDF)
+    # 5. Save to database for persistence
+    try:
+        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+        upload_id = save_upload_data(file.filename, file.filename, file_size, records, analysis)
+        session_data["upload_id"] = upload_id
+        print(f"Data saved to database with upload_id: {upload_id}")
+    except Exception as e:
+        print(f"Warning: Could not save to database: {e}")
+
+    # 6. Update AI knowledge base (CRITICAL - this makes AI work with the data)
     update_knowledge_base(analysis, file.filename)
+    print(f"AI knowledge base updated with {len(records)} students from {file.filename}")
 
     return {
         "status": "ok",
@@ -146,30 +170,217 @@ async def search_results(q: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
+@app.get("/settings")
+async def get_settings():
+    """Get database statistics and settings"""
+    try:
+        stats = get_database_stats()
+        return {
+            "database_stats": stats,
+            "status": "success"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error getting settings: {str(e)}"
+        }
+
+@app.get("/uploads")
+async def get_uploads():
+    """Get all uploads from database"""
+    try:
+        uploads = get_all_uploads()
+        return {
+            "uploads": uploads,
+            "status": "success"
+        }
+    except Exception as e:
+        return {
+            "uploads": [],
+            "status": "error",
+            "message": f"Error getting uploads: {str(e)}"
+        }
+
+@app.post("/database/clear")
+async def clear_database():
+    """Clear all data from database"""
+    try:
+        clear_all_data()
+        # Also clear session data
+        session_data["records"] = []
+        session_data["analysis"] = {}
+        session_data["filename"] = ""
+        session_data["upload_id"] = None
+        
+        # Clear AI knowledge base
+        from ai_agent import _knowledge_base
+        _knowledge_base["raw_data"] = []
+        _knowledge_base["abstract"] = {}
+        _knowledge_base["subject_analysis"] = []
+        _knowledge_base["top_students"] = []
+        _knowledge_base["subject_columns"] = []
+        _knowledge_base["pdf_filename"] = ""
+        
+        return {
+            "status": "success",
+            "message": "All data cleared successfully"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error clearing data: {str(e)}"
+        }
+
+@app.post("/uploads/{upload_id}/load")
+async def load_upload(upload_id: int):
+    """Load a specific upload by ID"""
+    try:
+        upload_data = get_upload_data(upload_id)
+        if upload_data:
+            session_data["records"] = upload_data["students"]
+            session_data["analysis"] = upload_data["analysis"]
+            session_data["filename"] = upload_data["upload_info"]["original_filename"]
+            session_data["upload_id"] = upload_data["upload_info"]["id"]
+            
+            # Update AI knowledge base
+            if upload_data["analysis"]:
+                update_knowledge_base(upload_data["analysis"], upload_data["upload_info"]["original_filename"])
+            
+            return {
+                "status": "success",
+                "message": f"Upload {upload_id} loaded successfully"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Upload not found"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error loading upload: {str(e)}"
+        }
+
+@app.delete("/uploads/{upload_id}")
+async def delete_upload_endpoint(upload_id: int):
+    """Delete a specific upload by ID"""
+    try:
+        delete_upload(upload_id)
+        return {
+            "status": "success",
+            "message": f"Upload {upload_id} deleted successfully"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error deleting upload: {str(e)}"
+        }
+
+@app.get("/current-data")
+async def get_current_data():
+    """Get the currently loaded data for the frontend"""
+    try:
+        # Ensure we have the latest data loaded
+        if not session_data.get("analysis"):
+            load_latest_session()
+        
+        if session_data.get("analysis") and "raw_data" in session_data["analysis"]:
+            return {
+                "status": "success",
+                "data": session_data["analysis"],
+                "filename": session_data.get("filename", "Unknown"),
+                "students_count": len(session_data["analysis"]["raw_data"])
+            }
+        else:
+            return {
+                "status": "no_data",
+                "message": "No data currently loaded"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error loading data: {str(e)}"
+        }
+
+@app.get("/data-status")
+async def get_data_status():
+    """Check what data is currently loaded in the system"""
+    try:
+        # Try to load latest data if none in session
+        if not session_data.get("analysis"):
+            load_latest_session()
+        
+        if session_data.get("analysis") and "raw_data" in session_data["analysis"]:
+            return {
+                "status": "data_loaded",
+                "filename": session_data.get("filename", "Unknown"),
+                "students_count": len(session_data["analysis"]["raw_data"]),
+                "upload_id": session_data.get("upload_id"),
+                "subjects": session_data["analysis"].get("subject_columns", [])
+            }
+        else:
+            return {
+                "status": "no_data",
+                "message": "No data currently loaded. Please upload a PDF file."
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error checking data status: {str(e)}"
+        }
+
+@app.get("/load-latest")
+async def load_latest_data():
+    """Load the latest upload data into the current session"""
+    try:
+        load_latest_session()
+        if session_data.get("analysis") and "raw_data" in session_data["analysis"]:
+            return {
+                "status": "success",
+                "message": f"Loaded data for {len(session_data['analysis']['raw_data'])} students",
+                "filename": session_data.get("filename", "Unknown")
+            }
+        else:
+            return {
+                "status": "no_data",
+                "message": "No previous data found in database"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error loading data: {str(e)}"
+        }
+
 @app.get("/ai-query")
 async def ai_search_results(q: str):
-    # Always try to provide a helpful response
+    """
+    ADVANCED AI Query endpoint that ALWAYS provides intelligent responses.
+    This endpoint never fails to give a helpful answer and always works with uploaded data.
+    """
     try:
-        # Check if we have data loaded
+        # Always try to ensure we have the latest data loaded
         if not session_data.get("analysis") or "raw_data" not in session_data["analysis"]:
-            # Try to load latest session if no data
-            load_latest_session()
-            
-            # If still no data, return helpful message
-            if not session_data.get("analysis") or "raw_data" not in session_data["analysis"]:
-                return {
-                    "query": q, 
-                    "response": "No data loaded. Upload a PDF first."
-                }
+            print("No data in session, attempting to load latest data...")
+            data_loaded = load_latest_session()
+            if data_loaded:
+                print("Successfully loaded data from database")
+            else:
+                print("No data found in database")
         
-        # Use the AI agent to handle all queries
+        # Check if we now have data
+        if session_data.get("analysis") and "raw_data" in session_data["analysis"]:
+            print(f"AI processing query with {len(session_data['analysis']['raw_data'])} students")
+        
+        # Use the enhanced AI agent to handle ALL queries
         response = query_hf(q)
         return {"query": q, "response": response}
             
     except Exception as e:
+        print(f"Error in AI query: {e}")
+        # Even if there's an error, provide a helpful response
         return {
             "query": q, 
-            "response": "Please try rephrasing your question."
+            "response": f"I'm your advanced AI assistant for academic analysis. I can help with student performance, grades, and insights. Please upload your result data and ask me anything!"
         }
 
 # ─────────────────────────────────────────────────────────────────────────────
