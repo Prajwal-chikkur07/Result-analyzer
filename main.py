@@ -8,6 +8,10 @@ from datetime import datetime
 from pdf_reader import extract_data_from_pdf
 from analysis import generate_analysis, query_results
 from ai_agent import query_hf, update_knowledge_base
+from database import (
+    save_upload_data, get_latest_upload_data, get_all_uploads, 
+    get_upload_data, clear_all_data, get_database_stats, delete_upload
+)
 
 app = FastAPI(title="AI Result Analysis Agent")
 
@@ -24,12 +28,29 @@ REPORT_DIR = os.path.join(os.getcwd(), "reports")
 for d in [UPLOAD_DIR, REPORT_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# Session state — holds data for the currently uploaded PDF
+# Session state — now backed by database
 session_data = {
     "records": [],
     "analysis": {},
-    "filename": ""
+    "filename": "",
+    "upload_id": None
 }
+
+def load_latest_session():
+    """Load the latest upload data into session"""
+    latest_data = get_latest_upload_data()
+    if latest_data:
+        session_data["records"] = latest_data["students"]
+        session_data["analysis"] = latest_data["analysis"]
+        session_data["filename"] = latest_data["upload_info"]["original_filename"]
+        session_data["upload_id"] = latest_data["upload_info"]["id"]
+        
+        # Update AI knowledge base
+        if latest_data["analysis"]:
+            update_knowledge_base(latest_data["analysis"], latest_data["upload_info"]["original_filename"])
+
+# Load latest session on startup
+load_latest_session()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /process — One-shot endpoint: upload + extract + analyse in one call
