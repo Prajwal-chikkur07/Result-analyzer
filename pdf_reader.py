@@ -1,5 +1,4 @@
 import pdfplumber
-import pandas as pd
 import re
 
 def extract_data_from_pdf(pdf_path):
@@ -73,21 +72,24 @@ def extract_data_from_pdf(pdf_path):
             tables = page.extract_tables()
             for table in tables:
                 if not table: continue
-                df = pd.DataFrame(table).dropna(how='all').reset_index(drop=True)
-                if len(df) < 2: continue
+                # Convert table to list of dictionaries without pandas
+                if len(table) < 2: continue
 
+                # Find header row
                 header_idx = 0
-                for i, row in df.iterrows():
+                for i, row in enumerate(table):
+                    if not row: continue
                     row_str = " ".join([str(x) for x in row if x]).lower()
                     if any(key in row_str for key in ['name', 'usn', 'id', 'total', 'result']):
                         header_idx = i
                         break
                 
-                headers = df.iloc[header_idx].tolist()
+                headers = table[header_idx]
                 headers = [str(h).replace('\n', ' ').strip() if h else f"Col_{i}" for i, h in enumerate(headers)]
-                data_rows = df.iloc[header_idx + 1:]
+                data_rows = table[header_idx + 1:]
                 
-                for _, row in data_rows.iterrows():
+                for row in data_rows:
+                    if not row: continue
                     row_dict = {}
                     for i, val in enumerate(row):
                         if i < len(headers):
