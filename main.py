@@ -148,13 +148,29 @@ async def search_results(q: str):
 
 @app.get("/ai-query")
 async def ai_search_results(q: str):
-    if not session_data.get("analysis") or "raw_data" not in session_data["analysis"]:
-        raise HTTPException(status_code=400, detail="No analysis data available to query")
+    # Always try to provide a helpful response
     try:
+        # Check if we have data loaded
+        if not session_data.get("analysis") or "raw_data" not in session_data["analysis"]:
+            # Try to load latest session if no data
+            load_latest_session()
+            
+            # If still no data, return helpful message
+            if not session_data.get("analysis") or "raw_data" not in session_data["analysis"]:
+                return {
+                    "query": q, 
+                    "response": "No data loaded. Upload a PDF first."
+                }
+        
+        # Use the AI agent to handle all queries
         response = query_hf(q)
         return {"query": q, "response": response}
+            
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI Query failed: {str(e)}")
+        return {
+            "query": q, 
+            "response": "Please try rephrasing your question."
+        }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /report — Generate and download a PDF report for the current analysis
