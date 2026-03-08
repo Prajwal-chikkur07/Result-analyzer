@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import os
 import shutil
 import json
@@ -22,6 +23,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static files (CSS, JS, etc.)
+if os.path.exists("assets"):
+    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
 UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
 REPORT_DIR = os.path.join(os.getcwd(), "reports")
@@ -66,6 +71,41 @@ except Exception as e:
     print(f"Warning: Database initialization failed: {e}")
 
 load_latest_session()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Frontend Routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_frontend():
+    """Serve the frontend HTML"""
+    try:
+        if os.path.exists("index.html"):
+            with open("index.html", "r") as f:
+                return HTMLResponse(content=f.read())
+        else:
+            return HTMLResponse(content="""
+            <html>
+                <head><title>AI Result Analysis Agent</title></head>
+                <body>
+                    <h1>AI Result Analysis Agent</h1>
+                    <p>Backend is running successfully!</p>
+                    <p>API endpoints are available at:</p>
+                    <ul>
+                        <li><a href="/docs">/docs</a> - API Documentation</li>
+                        <li><a href="/process">/process</a> - Upload and process PDF</li>
+                        <li><a href="/ai-query?q=hello">/ai-query</a> - AI Query endpoint</li>
+                    </ul>
+                </body>
+            </html>
+            """)
+    except Exception as e:
+        return HTMLResponse(content=f"<h1>Error: {str(e)}</h1>")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "message": "AI Result Analysis Agent is running"}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /process — One-shot endpoint: upload + extract + analyse in one call
