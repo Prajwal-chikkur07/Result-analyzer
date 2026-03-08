@@ -1,0 +1,10 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "cd result_analysis_agent/backend && pip install -r requirements.txt"
+
+[deploy]
+startCommand = "cd result_analysis_agent/backend && python main.py"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
