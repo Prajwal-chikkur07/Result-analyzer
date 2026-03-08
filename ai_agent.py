@@ -87,31 +87,27 @@ def query_hf(prompt, context_data=None):
         if any(word in prompt_lower for word in ['failed', 'fail', 'failing']):
             failed_students = [s for s in _knowledge_base["raw_data"] if s.get("Result", "").upper() == "FAIL"]
             if failed_students:
-                response = f"Here are the students who failed:\n\n"
-                response += "| Student Name | USN | Total Marks | Result |\n"
-                response += "|--------------|-----|-------------|--------|\n"
-                for student in failed_students:
-                    name = student.get("Student Name", "N/A")
-                    usn = student.get("USN", "N/A")
-                    total = student.get("Total", "N/A")
-                    result = student.get("Result", "N/A")
-                    response += f"| {name} | {usn} | {total} | {result} |\n"
-                response += f"\n**Total Failed Students: {len(failed_students)}**"
-                
-                # Add subject-wise failure analysis if available
-                if 'subject' in prompt_lower:
-                    subject_cols = _knowledge_base.get("subject_columns", [])
-                    if subject_cols:
-                        response += "\n\n**Subject-wise Failure Details:**\n"
-                        for student in failed_students:
-                            response += f"\n**{student.get('Student Name', 'N/A')}:**\n"
-                            for subject in subject_cols:
-                                if subject in student:
-                                    score = student[subject]
-                                    if isinstance(score, (int, float)) and score < 35:  # Assuming 35 is pass mark
-                                        response += f"- {subject}: {score} (Failed)\n"
-                
-                return response
+                if len(failed_students) <= 2:
+                    # Simple text response for 2 or fewer students
+                    response = f"Found {len(failed_students)} student(s) who failed:\n\n"
+                    for i, student in enumerate(failed_students, 1):
+                        name = student.get("Student Name", "N/A")
+                        usn = student.get("USN", "N/A")
+                        total = student.get("Total", "N/A")
+                        response += f"{i}. {name} (USN: {usn}) - Total: {total} marks\n"
+                    return response
+                else:
+                    # Table format for more than 2 students
+                    response = f"Here are the {len(failed_students)} students who failed:\n\n"
+                    response += "| Student Name | USN | Total Marks | Result |\n"
+                    response += "|--------------|-----|-------------|--------|\n"
+                    for student in failed_students:
+                        name = student.get("Student Name", "N/A")
+                        usn = student.get("USN", "N/A")
+                        total = student.get("Total", "N/A")
+                        result = student.get("Result", "N/A")
+                        response += f"| {name} | {usn} | {total} | {result} |\n"
+                    return response
             else:
                 return "Great news! No students have failed in this examination. All students have passed successfully! 🎉"
         
@@ -119,25 +115,35 @@ def query_hf(prompt, context_data=None):
         elif any(word in prompt_lower for word in ['passed', 'pass', 'passing', 'successful']):
             passed_students = [s for s in _knowledge_base["raw_data"] if s.get("Result", "").upper() == "PASS"]
             if passed_students:
-                response = f"Here are the students who passed:\n\n"
-                response += "| Student Name | USN | Total Marks | Result |\n"
-                response += "|--------------|-----|-------------|--------|\n"
-                for student in passed_students:
-                    name = student.get("Student Name", "N/A")
-                    usn = student.get("USN", "N/A")
-                    total = student.get("Total", "N/A")
-                    result = student.get("Result", "N/A")
-                    response += f"| {name} | {usn} | {total} | {result} |\n"
-                response += f"\n**Total Passed Students: {len(passed_students)}**"
-                
-                # Add top performers if requested
-                if any(word in prompt_lower for word in ['top', 'best', 'highest']):
-                    top_students = sorted(passed_students, key=lambda x: x.get("Total", 0), reverse=True)[:5]
-                    response += "\n\n**Top 5 Performers:**\n"
-                    for i, student in enumerate(top_students, 1):
-                        response += f"{i}. {student.get('Student Name', 'N/A')} - {student.get('Total', 'N/A')} marks\n"
-                
-                return response
+                if len(passed_students) <= 2:
+                    # Simple text response for 2 or fewer students
+                    response = f"Found {len(passed_students)} student(s) who passed:\n\n"
+                    for i, student in enumerate(passed_students, 1):
+                        name = student.get("Student Name", "N/A")
+                        usn = student.get("USN", "N/A")
+                        total = student.get("Total", "N/A")
+                        response += f"{i}. {name} (USN: {usn}) - Total: {total} marks\n"
+                    
+                    # Add top performers if requested
+                    if any(word in prompt_lower for word in ['top', 'best', 'highest']):
+                        top_students = sorted(passed_students, key=lambda x: x.get("Total", 0), reverse=True)[:5]
+                        response += f"\nTop performers among them:\n"
+                        for i, student in enumerate(top_students, 1):
+                            response += f"{i}. {student.get('Student Name', 'N/A')} - {student.get('Total', 'N/A')} marks\n"
+                    
+                    return response
+                else:
+                    # Table format for more than 2 students
+                    response = f"Here are the {len(passed_students)} students who passed:\n\n"
+                    response += "| Student Name | USN | Total Marks | Result |\n"
+                    response += "|--------------|-----|-------------|--------|\n"
+                    for student in passed_students:
+                        name = student.get("Student Name", "N/A")
+                        usn = student.get("USN", "N/A")
+                        total = student.get("Total", "N/A")
+                        result = student.get("Result", "N/A")
+                        response += f"| {name} | {usn} | {total} | {result} |\n"
+                    return response
             else:
                 return "Unfortunately, no students have passed in this examination. This requires immediate attention and review of the assessment or teaching methods."
         
