@@ -1,1 +1,1 @@
-web: cd result_analysis_agent/backend && python main.py
+web: python main.py

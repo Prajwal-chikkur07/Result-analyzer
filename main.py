@@ -24,6 +24,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create an API router with /api prefix for production frontend
+from fastapi import APIRouter
+api_router = APIRouter(prefix="/api")
+
 # Serve static files (CSS, JS, etc.)
 if os.path.exists("assets"):
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
@@ -590,6 +594,28 @@ async def generate_report():
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/* routes — mirror all endpoints with /api prefix for production frontend
+# ─────────────────────────────────────────────────────────────────────────────
+api_router.add_api_route("/health", health_check, methods=["GET"])
+api_router.add_api_route("/process", process_pdf, methods=["POST"])
+api_router.add_api_route("/upload", upload_pdf, methods=["POST"])
+api_router.add_api_route("/extract", extract_results, methods=["GET"])
+api_router.add_api_route("/analysis", get_analysis, methods=["GET"])
+api_router.add_api_route("/query", search_results, methods=["GET"])
+api_router.add_api_route("/ai-query", ai_search_results, methods=["GET"])
+api_router.add_api_route("/report", generate_report, methods=["GET"])
+api_router.add_api_route("/settings", get_settings, methods=["GET"])
+api_router.add_api_route("/uploads", get_uploads, methods=["GET"])
+api_router.add_api_route("/uploads/{upload_id}", delete_upload_endpoint, methods=["DELETE"])
+api_router.add_api_route("/uploads/{upload_id}/load", load_upload, methods=["POST"])
+api_router.add_api_route("/database/clear", clear_database, methods=["POST"])
+api_router.add_api_route("/current-data", get_current_data, methods=["GET"])
+api_router.add_api_route("/data-status", get_data_status, methods=["GET"])
+api_router.add_api_route("/load-latest", load_latest_data, methods=["GET"])
+
+app.include_router(api_router)
 
 if __name__ == "__main__":
     import uvicorn
