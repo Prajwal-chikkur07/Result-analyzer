@@ -1,7 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import os
 import shutil
 import json
@@ -46,18 +47,21 @@ session_data = {
 }
 
 def load_latest_session():
-    """Load the latest upload data into session and update AI knowledge base"""
+    """Load the latest upload data into session, re-run analysis, and update AI knowledge base"""
     try:
         latest_data = get_latest_upload_data()
-        if latest_data:
+        if latest_data and latest_data["students"]:
             session_data["records"] = latest_data["students"]
-            session_data["analysis"] = latest_data["analysis"]
             session_data["filename"] = latest_data["upload_info"]["original_filename"]
             session_data["upload_id"] = latest_data["upload_info"]["id"]
-            
-            # CRITICAL: Update AI knowledge base so AI can work with the data
-            if latest_data["analysis"]:
-                update_knowledge_base(latest_data["analysis"], latest_data["upload_info"]["original_filename"])
+
+            # Re-run analysis to get properly flattened data with subject_student_details
+            analysis = generate_analysis(latest_data["students"])
+            session_data["analysis"] = analysis
+
+            # Update AI knowledge base
+            if analysis:
+                update_knowledge_base(analysis, latest_data["upload_info"]["original_filename"])
                 print(f"AI knowledge base updated with data from {latest_data['upload_info']['original_filename']}")
                 print(f"Loaded {len(latest_data['students'])} students for AI analysis")
             return True
@@ -247,15 +251,16 @@ async def get_uploads():
 
 @app.post("/database/clear")
 async def clear_database():
-    """Clear all data from database"""
+    """Clear all data from database permanently"""
     try:
         clear_all_data()
-        # Also clear session data
+
+        # Clear session data
         session_data["records"] = []
         session_data["analysis"] = {}
         session_data["filename"] = ""
         session_data["upload_id"] = None
-        
+
         # Clear AI knowledge base
         from ai_agent import _knowledge_base
         _knowledge_base["raw_data"] = []
@@ -264,10 +269,26 @@ async def clear_database():
         _knowledge_base["top_students"] = []
         _knowledge_base["subject_columns"] = []
         _knowledge_base["pdf_filename"] = ""
-        
+
+        # Delete uploaded PDF files
+        if os.path.exists(UPLOAD_DIR):
+            for f in os.listdir(UPLOAD_DIR):
+                try:
+                    os.remove(os.path.join(UPLOAD_DIR, f))
+                except Exception:
+                    pass
+
+        # Delete generated reports
+        if os.path.exists(REPORT_DIR):
+            for f in os.listdir(REPORT_DIR):
+                try:
+                    os.remove(os.path.join(REPORT_DIR, f))
+                except Exception:
+                    pass
+
         return {
             "status": "success",
-            "message": "All data cleared successfully"
+            "message": "All data cleared permanently"
         }
     except Exception as e:
         return {
@@ -426,6 +447,157 @@ async def ai_search_results(q: str):
             "query": q, 
             "response": f"I'm your advanced AI assistant for academic analysis. I can help with student performance, grades, and insights. Please upload your result data and ask me anything!"
         }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Student CRUD endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _refresh_analysis():
+    """Re-run analysis on current session data and update everything"""
+    if session_data.get("records"):
+        analysis = generate_analysis(session_data["records"])
+        session_data["analysis"] = analysis
+        update_knowledge_base(analysis, session_data.get("filename", ""))
+
+@app.post("/add-student")
+async def add_student(payload: dict = Body(...)):
+    """Add a new student to the current dataset"""
+    try:
+        if not session_data.get("records"):
+            session_data["records"] = []
+
+        student = payload.get("student", {})
+        name = student.get("Student Name", "")
+        usn = student.get("USN", "")
+
+        # Extract subject marks (everything that isn't a standard field)
+        standard_fields = {"Student Name", "USN", "Total", "Result"}
+        subjects = {k: v for k, v in student.items() if k not in standard_fields}
+
+        new_record = {
+            "Student Name": name,
+            "USN": usn,
+            "Subjects": subjects,
+            "Total": student.get("Total", sum(int(v) for v in subjects.values() if str(v).isdigit())),
+            "Result": student.get("Result", "PASS"),
+        }
+        session_data["records"].append(new_record)
+        _refresh_analysis()
+
+        return {"status": "success", "message": f"Student '{name}' added"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/update-student")
+async def update_student(payload: dict = Body(...)):
+    """Update an existing student by index in raw_data"""
+    try:
+        index = payload.get("index")
+        student = payload.get("student", {})
+
+        raw = session_data.get("analysis", {}).get("raw_data", [])
+        if index is None or index < 0 or index >= len(raw):
+            return {"status": "error", "message": "Invalid student index"}
+
+        name = student.get("Student Name", "")
+        usn = student.get("USN", "")
+        total = student.get("Total", 0)
+        result = student.get("Result", "PASS")
+
+        # Extract subject marks
+        standard_fields = {"Student Name", "USN", "Total", "Result"}
+        subjects = {k: v for k, v in student.items() if k not in standard_fields}
+
+        # Update in raw_data
+        row = raw[index]
+        row["Student Name"] = name
+        row["USN"] = usn
+        row["Result"] = result
+        row["Total"] = total
+        for subj, mark in subjects.items():
+            row[subj] = mark
+
+        # Also update the records list used for re-analysis
+        if index < len(session_data.get("records", [])):
+            rec = session_data["records"][index]
+            rec["Student Name"] = name
+            rec["USN"] = usn
+            rec["Result"] = result
+            rec["Total"] = total
+            if "Subjects" in rec:
+                rec["Subjects"].update(subjects)
+            else:
+                rec["Subjects"] = subjects
+
+        _refresh_analysis()
+        return {"status": "success", "message": f"Student '{name}' updated"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/manage-subjects")
+async def manage_subjects(payload: dict = Body(...)):
+    """Add or remove a subject column from all student data"""
+    try:
+        action = payload.get("action")
+        subject = payload.get("subject", "").strip()
+        if not subject:
+            return {"status": "error", "message": "Subject name is required"}
+
+        raw = session_data.get("analysis", {}).get("raw_data", [])
+        records = session_data.get("records", [])
+        columns = session_data.get("analysis", {}).get("subject_columns", [])
+
+        if action == "add":
+            if subject in columns:
+                return {"status": "error", "message": "Subject already exists"}
+            # Add column with 0 marks to every student
+            for row in raw:
+                row[subject] = 0
+            for rec in records:
+                if "Subjects" in rec and isinstance(rec["Subjects"], dict):
+                    rec["Subjects"][subject] = 0
+            columns.append(subject)
+            _refresh_analysis()
+            return {"status": "success", "message": f"Subject '{subject}' added"}
+
+        elif action == "remove":
+            if subject not in columns:
+                return {"status": "error", "message": "Subject not found"}
+            # Remove column from every student
+            for row in raw:
+                row.pop(subject, None)
+            for rec in records:
+                if "Subjects" in rec and isinstance(rec["Subjects"], dict):
+                    rec["Subjects"].pop(subject, None)
+            columns.remove(subject)
+            _refresh_analysis()
+            return {"status": "success", "message": f"Subject '{subject}' removed"}
+
+        else:
+            return {"status": "error", "message": "Invalid action. Use 'add' or 'remove'"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/delete-student")
+async def delete_student(payload: dict = Body(...)):
+    """Delete a student by index"""
+    try:
+        index = payload.get("index")
+        raw = session_data.get("analysis", {}).get("raw_data", [])
+        if index is None or index < 0 or index >= len(raw):
+            return {"status": "error", "message": "Invalid student index"}
+
+        deleted_name = raw[index].get("Student Name", "Unknown")
+        raw.pop(index)
+
+        # Also remove from records
+        if index < len(session_data.get("records", [])):
+            session_data["records"].pop(index)
+
+        _refresh_analysis()
+        return {"status": "success", "message": f"Student '{deleted_name}' deleted"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /report — Generate and download a PDF report for the current analysis
@@ -610,6 +782,10 @@ api_router.add_api_route("/settings", get_settings, methods=["GET"])
 api_router.add_api_route("/uploads", get_uploads, methods=["GET"])
 api_router.add_api_route("/uploads/{upload_id}", delete_upload_endpoint, methods=["DELETE"])
 api_router.add_api_route("/uploads/{upload_id}/load", load_upload, methods=["POST"])
+api_router.add_api_route("/add-student", add_student, methods=["POST"])
+api_router.add_api_route("/update-student", update_student, methods=["POST"])
+api_router.add_api_route("/delete-student", delete_student, methods=["POST"])
+api_router.add_api_route("/manage-subjects", manage_subjects, methods=["POST"])
 api_router.add_api_route("/database/clear", clear_database, methods=["POST"])
 api_router.add_api_route("/current-data", get_current_data, methods=["GET"])
 api_router.add_api_route("/data-status", get_data_status, methods=["GET"])

@@ -84,9 +84,13 @@ def save_upload_data(filename: str, original_filename: str, file_size: int,
         
         # Insert student records
         for student in student_records:
-            subject_marks = {k: v for k, v in student.items() 
-                           if k not in ['Student Name', 'USN', 'Total', 'Result']}
-            
+            # Handle both formats: nested "Subjects" dict or flattened columns
+            if 'Subjects' in student and isinstance(student['Subjects'], dict):
+                subject_marks = student['Subjects']
+            else:
+                subject_marks = {k: v for k, v in student.items()
+                               if k not in ['Student Name', 'USN', 'Total', 'Result']}
+
             cursor.execute('''
                 INSERT INTO students (upload_id, student_name, usn, total_marks, result, subject_marks)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -176,19 +180,20 @@ def get_upload_data(upload_id: int) -> Optional[Dict]:
     
     conn.close()
     
-    # Build student records
+    # Build student records in the format expected by generate_analysis()
     students = []
     for row in student_rows:
+        subject_marks = json.loads(row[6]) if row[6] else {}
+        # Handle double-nested Subjects (legacy data stored as {"Subjects": {...}})
+        if 'Subjects' in subject_marks and isinstance(subject_marks['Subjects'], dict):
+            subject_marks = subject_marks['Subjects']
         student = {
             'Student Name': row[2],
             'USN': row[3],
+            'Subjects': subject_marks,
             'Total': row[4],
             'Result': row[5]
         }
-        # Add subject marks
-        if row[6]:  # subject_marks JSON
-            subject_marks = json.loads(row[6])
-            student.update(subject_marks)
         students.append(student)
     
     # Build analysis data
@@ -233,27 +238,39 @@ def get_latest_upload_data() -> Optional[Dict]:
     return None
 
 def clear_all_data():
-    """Clear all data from the database"""
+    """Clear all data from the database permanently"""
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
-    
+
     try:
-        # Delete all records (foreign key constraints will handle cascading)
+        # Delete all records from all tables
         cursor.execute('DELETE FROM analysis')
         cursor.execute('DELETE FROM students')
         cursor.execute('DELETE FROM uploads')
         cursor.execute('DELETE FROM settings')
-        
+
         # Reset auto-increment counters
-        cursor.execute('DELETE FROM sqlite_sequence')
-        
+        try:
+            cursor.execute('DELETE FROM sqlite_sequence')
+        except Exception:
+            pass
+
         conn.commit()
-        return True
     except Exception as e:
         conn.rollback()
         raise e
     finally:
         conn.close()
+
+    # VACUUM must run outside a transaction
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        conn.execute('VACUUM')
+        conn.close()
+    except Exception:
+        pass
+
+    return True
 
 def get_database_stats() -> Dict:
     """Get database statistics"""
@@ -287,8 +304,10 @@ def delete_upload(upload_id: int) -> bool:
     """Delete a specific upload and all related data"""
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
-    
+
     try:
+        cursor.execute('DELETE FROM analysis WHERE upload_id = ?', (upload_id,))
+        cursor.execute('DELETE FROM students WHERE upload_id = ?', (upload_id,))
         cursor.execute('DELETE FROM uploads WHERE id = ?', (upload_id,))
         conn.commit()
         return cursor.rowcount > 0

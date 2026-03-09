@@ -86,12 +86,126 @@ def generate_analysis(data):
             "Result": student["Result"]
         })
 
+    # 4. Subject-wise Student Details with Performance Reports
+    subject_student_details = []
+    for sub in all_subjects_ordered:
+        sub_stat = next((s for s in subject_stats if s["subject"] == sub), None)
+        sub_avg = sub_stat["average"] if sub_stat else 0
+        sub_highest = sub_stat["highest"] if sub_stat else 0
+
+        students_in_subject = []
+        for row in rows:
+            score = row.get(sub)
+            if score is None:
+                continue
+            if not str(score).replace('.', '').isdigit():
+                continue
+            score_val = float(score)
+
+            # Grade
+            if score_val >= 90:
+                grade = "O"
+            elif score_val >= 80:
+                grade = "A+"
+            elif score_val >= 70:
+                grade = "A"
+            elif score_val >= 60:
+                grade = "B+"
+            elif score_val >= 50:
+                grade = "B"
+            elif score_val >= 40:
+                grade = "C"
+            elif score_val >= 35:
+                grade = "P"
+            else:
+                grade = "F"
+
+            # Performance relative to class
+            if score_val >= sub_avg + 15:
+                performance = "Excellent"
+            elif score_val >= sub_avg + 5:
+                performance = "Above Average"
+            elif score_val >= sub_avg - 5:
+                performance = "Average"
+            elif score_val >= sub_avg - 15:
+                performance = "Below Average"
+            else:
+                performance = "Needs Improvement"
+
+            # Lagging areas and improvement suggestions
+            lagging = []
+            improvements = []
+
+            if score_val < 35:
+                lagging.append("Failed — needs focused revision on core concepts")
+                improvements.append("Revisit fundamentals and practice previous year questions")
+                improvements.append("Seek tutoring or join study groups for this subject")
+            elif score_val < 50:
+                lagging.append("Borderline performance — at risk of failing")
+                improvements.append("Strengthen weak topics through targeted practice")
+                improvements.append("Allocate more dedicated study time")
+            elif score_val < 60:
+                lagging.append("Below class average — significant room for growth")
+                improvements.append("Focus on application-based and problem-solving questions")
+                improvements.append("Review notes regularly and attempt mock tests")
+
+            if score_val < sub_avg:
+                gap = round(sub_avg - score_val, 1)
+                lagging.append(f"Scoring {gap} marks below class average ({sub_avg})")
+                improvements.append(f"Target at least {int(sub_avg + 5)} marks to rise above average")
+
+            if score_val >= sub_avg and score_val < sub_highest - 10:
+                improvements.append(f"Aim for top scorer range ({int(sub_highest)} marks)")
+
+            # Check if this is the student's weakest subject
+            student_scores = {}
+            for other_sub in all_subjects_ordered:
+                other_score = row.get(other_sub)
+                if other_score is not None and str(other_score).replace('.', '').isdigit():
+                    student_scores[other_sub] = float(other_score)
+
+            if len(student_scores) > 1:
+                avg_other = sum(v for k, v in student_scores.items() if k != sub) / (len(student_scores) - 1)
+                if score_val < avg_other - 10:
+                    lagging.append(f"Weakest subject — {round(avg_other - score_val, 1)} marks below own average ({round(avg_other, 1)})")
+                    improvements.append("Prioritize this subject over stronger ones")
+
+            if not lagging:
+                lagging.append("Performing well — no major concerns")
+            if not improvements:
+                improvements.append("Maintain consistency and aim higher")
+
+            students_in_subject.append({
+                "name": row["Student Name"],
+                "usn": row["USN"],
+                "marks": score_val,
+                "grade": grade,
+                "performance": performance,
+                "lagging": lagging,
+                "improvements": improvements,
+                "total": row.get("Total", 0),
+                "result": row.get("Result", "")
+            })
+
+        students_in_subject.sort(key=lambda x: x["marks"], reverse=True)
+
+        subject_student_details.append({
+            "subject": sub,
+            "class_average": sub_avg,
+            "highest": sub_highest,
+            "total_students": len(students_in_subject),
+            "passed": len([s for s in students_in_subject if s["marks"] >= 35]),
+            "failed": len([s for s in students_in_subject if s["marks"] < 35]),
+            "students": students_in_subject
+        })
+
     return {
         "abstract": abstract,
         "subject_analysis": subject_stats,
         "top_students": top_students,
         "raw_data": rows,
-        "subject_columns": all_subjects_ordered   # NEW: sent to frontend for dynamic columns
+        "subject_columns": all_subjects_ordered,
+        "subject_student_details": subject_student_details
     }
 
 
