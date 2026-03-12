@@ -4,7 +4,7 @@ import os
 import re
 
 # Google Gemini API configuration
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyC3Ys3cy_ewpAfYee8_-XbKeJv38Q44hv8")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
 
 # Fallback to Hugging Face if needed

@@ -10,5 +10,5 @@ restartPolicyMaxRetries = 10
 
 [env]
 PORT = "8000"
-GOOGLE_API_KEY = "AIzaSyC3Ys3cy_ewpAfYee8_-XbKeJv38Q44hv8"
+GOOGLE_API_KEY = "${{GOOGLE_API_KEY}}"
 PYTHON_VERSION = "3.11.9"

@@ -25,7 +25,7 @@
     }
   ],
   "env": {
-    "GOOGLE_API_KEY": "AIzaSyC3Ys3cy_ewpAfYee8_-XbKeJv38Q44hv8"
+    "GOOGLE_API_KEY": "@google_api_key"
   },
   "headers": [
     {
